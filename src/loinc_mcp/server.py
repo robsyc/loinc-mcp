@@ -9,7 +9,8 @@ from typing import Annotated
 import httpx
 from fastmcp import FastMCP
 
-from .utils import (
+from loinc_mcp.utils import (
+    FHIR_BASE_URL,
     LOINC_BASE_URL,
     LOINC_TIMEOUT,
     format_code_details,
@@ -25,11 +26,18 @@ mcp = FastMCP(
     instructions=(
         "Query LOINC medical terminology codes. "
         "Use `search` to find codes by text (e.g., 'glucose', 'blood pressure'). "
-        "Use `get_code` for full details including panel members and answer lists."
+        "Use `get_code` for full details including units, panel members, and answer options."
     ),
 )
 
-client = httpx.AsyncClient(timeout=LOINC_TIMEOUT)
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=LOINC_TIMEOUT)
+    return _client
 
 
 def _auth() -> tuple[str, str]:
@@ -39,7 +47,7 @@ def _auth() -> tuple[str, str]:
 async def _request(endpoint: str, params: dict[str, str | int]) -> dict:
     """Make an authenticated GET to the LOINC Search API."""
     username, password = _auth()
-    resp = await client.get(
+    resp = await _get_client().get(
         f"{LOINC_BASE_URL}/{endpoint}",
         params=params,
         auth=(username, password),
@@ -60,20 +68,18 @@ async def _search_code(code: str) -> dict | None:
 
 
 async def _get_panel_members(code: str) -> list[dict]:
-    """Fetch panel members via the /panels endpoint."""
+    """Fetch panel members via the FHIR Questionnaire endpoint."""
     try:
-        data = await _request("panels", {"query": code, "rows": 100})
-        return format_panel_members(data)
+        username, password = _auth()
+        resp = await _get_client().get(
+            f"{FHIR_BASE_URL}/Questionnaire/{code}",
+            auth=(username, password),
+            headers={"Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        return format_panel_members(resp.json())
     except httpx.HTTPError:
         return []
-
-
-async def _get_answer_list(code: str) -> dict | None:
-    """Fetch the answer list for a LOINC code."""
-    try:
-        return await _request("answerlists", {"LoincNumber": code})
-    except httpx.HTTPError:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +87,14 @@ async def _get_answer_list(code: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
 async def search(
     query: Annotated[
         str,
@@ -114,15 +127,18 @@ async def search(
         return format_error("Request failed", str(e))
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
 async def get_code(
     code: Annotated[str, "LOINC code, e.g. '2339-0' (Glucose in Blood) or '24331-1' (Lipid Panel)"],
-    include_answer_list: Annotated[
-        bool,
-        "Include answer options for coded observations (surveys, questionnaires)",
-    ] = True,
 ) -> str:
-    """Get full details for a LOINC code: parts, classification, and panel members if applicable."""
+    """Get full details for a LOINC code: name, parts, classification, units, and panel members/answer options if applicable."""
     try:
         loinc_data = await _search_code(code)
         if not loinc_data:
@@ -132,11 +148,7 @@ async def get_code(
         if is_panel(loinc_data):
             panel_members = await _get_panel_members(code) or None
 
-        answer_list = None
-        if include_answer_list:
-            answer_list = await _get_answer_list(code)
-
-        return format_code_details(loinc_data, panel_members, answer_list)
+        return format_code_details(loinc_data, panel_members)
 
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:

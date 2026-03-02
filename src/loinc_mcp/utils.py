@@ -8,6 +8,7 @@ import os
 from typing import Any
 
 LOINC_BASE_URL = "https://loinc.regenstrief.org/searchapi"
+FHIR_BASE_URL = "https://fhir.loinc.org"
 LOINC_TIMEOUT = 30.0
 
 CLASS_TYPES: dict[str, str] = {
@@ -98,7 +99,6 @@ def format_search_results(data: dict[str, Any], limit: int) -> str:
 def format_code_details(
     data: dict[str, Any],
     panel_members: list[dict[str, Any]] | None = None,
-    answer_list_data: dict[str, Any] | None = None,
 ) -> str:
     """Format detailed LOINC code information."""
     code: dict[str, Any] = {
@@ -136,11 +136,15 @@ def format_code_details(
     if status:
         code["status"] = status
 
+    units = data.get("EXAMPLE_UCUM_UNITS") or data.get("EXAMPLE_UNITS") or ""
+    if units:
+        code["units"] = units
+
     definition = data.get("DefinitionDescription", "")
     if definition:
         code["definition"] = definition
 
-    related = data.get("RELATEDNAMES_SECONDARY", "")
+    related = data.get("RELATEDNAMES2") or data.get("RELATEDNAMES_SECONDARY") or ""
     if related:
         names = [n.strip() for n in related.split(";") if n.strip()]
         if names:
@@ -149,43 +153,39 @@ def format_code_details(
     if panel_members:
         code["panel_members"] = panel_members
 
-    if answer_list_data:
-        answers = _format_answer_list(answer_list_data)
-        if answers:
-            code["answer_list"] = answers
-
     return _to_json(code)
 
 
 def format_panel_members(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract and format panel member entries from a /panels response."""
-    items = _results_list(data)
+    """Extract panel member entries from a FHIR Questionnaire response.
+
+    Also extracts inline answer options when present (e.g. survey items).
+    """
+    items = data.get("item", [])
     members: list[dict[str, Any]] = []
 
     for item in items:
-        entry: dict[str, Any] = {}
-        loinc = item.get("Loinc") or item.get("LOINC_NUM") or item.get("loinc") or ""
-        name = (
-            item.get("LoincName")
-            or item.get("LONG_COMMON_NAME")
-            or item.get("loincName")
-            or ""
-        )
-        if not loinc and not name:
+        codes = item.get("code", [])
+        if not codes:
+            continue
+        code = codes[0].get("code", "")
+        name = codes[0].get("display", "") or item.get("text", "")
+        if not code:
             continue
 
-        if loinc:
-            entry["code"] = loinc
-        if name:
-            entry["name"] = name
+        entry: dict[str, Any] = {"code": code, "name": name}
+        if item.get("required") is not None:
+            entry["required"] = item["required"]
 
-        seq = item.get("Sequence") or item.get("sequence") or ""
-        if seq:
-            entry["sequence"] = seq
-
-        opt = item.get("Optionality") or item.get("optionality") or ""
-        if opt:
-            entry["required"] = opt in ("R", "r")
+        answer_opts = item.get("answerOption", [])
+        if answer_opts:
+            answers = []
+            for opt in answer_opts:
+                vc = opt.get("valueCoding", {})
+                if vc.get("code") or vc.get("display"):
+                    answers.append({"code": vc.get("code", ""), "text": vc.get("display", "")})
+            if answers:
+                entry["answers"] = answers
 
         members.append(entry)
 
@@ -198,39 +198,6 @@ def format_error(message: str, context: str | None = None) -> str:
     if context:
         error["context"] = context
     return _to_json(error)
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _format_answer_list(data: dict[str, Any]) -> dict[str, Any] | None:
-    """Format answer list data for a LOINC code."""
-    items = _results_list(data)
-    if not items:
-        return None
-
-    answers: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        answer: dict[str, Any] = {
-            "code": item.get("LoincAnswerCode") or item.get("answerCode") or "",
-            "text": item.get("DisplayText") or item.get("displayText") or "",
-            "sequence": item.get("Sequence") or item.get("sequence") or "",
-        }
-        answer = {k: v for k, v in answer.items() if v}
-        if answer.get("code") or answer.get("text"):
-            answers.append(answer)
-
-    if not answers:
-        return None
-
-    list_id = items[0].get("ListId") or items[0].get("listId") or ""
-    result: dict[str, Any] = {"answers": answers}
-    if list_id:
-        result["id"] = list_id
-    return result
 
 
 def _to_json(data: dict[str, Any]) -> str:

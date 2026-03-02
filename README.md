@@ -7,7 +7,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) server for querying
 | Tool | Description |
 |------|-------------|
 | `search` | Search LOINC codes by text query. Returns codes, names, and classifications. |
-| `get_code` | Get full details for a LOINC code: parts, classification, panel members, and answer lists. |
+| `get_code` | Get full details for a LOINC code: parts, classification, units, panel members, and answer options. |
 
 ## Quick Start
 
@@ -71,7 +71,7 @@ This server wraps the [LOINC Search API](https://loinc.org/kb/using-loinc-api/):
 
 - **Base URL**: `https://loinc.regenstrief.org/searchapi/`
 - **Auth**: HTTP Basic Authentication (LOINC account credentials)
-- **Endpoints used**: `/loincs`, `/panels`, `/answerlists`
+- **Endpoints used**: `/loincs` (search) and FHIR `/Questionnaire/{code}` (panels)
 
 ### LOINC Class Types
 
@@ -84,7 +84,7 @@ This server wraps the [LOINC Search API](https://loinc.org/kb/using-loinc-api/):
 
 ### Panel Detection
 
-When `get_code` is called for a panel (detected via the `CLASS` field), panel members are automatically included in the response with their codes, names, sequence, and optionality.
+When `get_code` is called for a panel (detected via the `CLASS` field), panel members are automatically fetched from the FHIR Questionnaire endpoint. For survey panels, answer options are included inline with each member.
 
 ## Development
 

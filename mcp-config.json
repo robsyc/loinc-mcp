@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "loinc-mcp": {
+      "command": "uv",
+      "args": ["tool", "run", "loinc-mcp"],
+      "env": {
+        "LOINC_USERNAME": "your-username",
+        "LOINC_PASSWORD": "your-password"
+      }
+    }
+  }
+}
