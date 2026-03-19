@@ -72,6 +72,7 @@ This server wraps the [LOINC Search API](https://loinc.org/kb/using-loinc-api/):
 - **Base URL**: `https://loinc.regenstrief.org/searchapi/`
 - **Auth**: HTTP Basic Authentication (LOINC account credentials)
 - **Endpoints used**: `/loincs` (search) and FHIR `/Questionnaire/{code}` (panels)
+- **Rate limiting**: 10 requests/second (enforced client-side)
 
 ### LOINC Class Types
 

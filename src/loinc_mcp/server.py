@@ -7,6 +7,7 @@ via the LOINC Search API (https://loinc.regenstrief.org/searchapi).
 from typing import Annotated
 
 import httpx
+from aiolimiter import AsyncLimiter
 from fastmcp import FastMCP
 
 from loinc_mcp.utils import (
@@ -31,6 +32,13 @@ mcp = FastMCP(
 )
 
 _client: httpx.AsyncClient | None = None
+_rate_limiter: AsyncLimiter = AsyncLimiter(10, 1.0)  # 10 requests/second
+
+
+async def _rate_limited_get(url: str, **kwargs) -> httpx.Response:
+    """Make a rate-limited GET request to the LOINC API."""
+    async with _rate_limiter:
+        return await _get_client().get(url, **kwargs)
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -47,7 +55,7 @@ def _auth() -> tuple[str, str]:
 async def _request(endpoint: str, params: dict[str, str | int]) -> dict:
     """Make an authenticated GET to the LOINC Search API."""
     username, password = _auth()
-    resp = await _get_client().get(
+    resp = await _rate_limited_get(
         f"{LOINC_BASE_URL}/{endpoint}",
         params=params,
         auth=(username, password),
@@ -71,7 +79,7 @@ async def _get_panel_members(code: str) -> list[dict]:
     """Fetch panel members via the FHIR Questionnaire endpoint."""
     try:
         username, password = _auth()
-        resp = await _get_client().get(
+        resp = await _rate_limited_get(
             f"{FHIR_BASE_URL}/Questionnaire/{code}",
             auth=(username, password),
             headers={"Accept": "application/json"},
